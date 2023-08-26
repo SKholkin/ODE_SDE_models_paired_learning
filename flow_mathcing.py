@@ -8,7 +8,7 @@ class FlowMathcing(nn.Module):
         # CNN + positional embeding time conditioning
         # can use NN from MNIST DDPM
         self.vector_net = unet
-        self.euler_dt = 0.01
+        self.euler_dt = 0.2
         
     
     def forward(self, x_0):
