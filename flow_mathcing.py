@@ -8,7 +8,7 @@ class FlowMathcing(nn.Module):
         # CNN + positional embeding time conditioning
         # can use NN from MNIST DDPM
         self.vector_net = unet
-        self.euler_dt = 0.2
+        self.euler_dt = 0.01
         
     
     def forward(self, x_0):
@@ -23,10 +23,13 @@ class FlowMathcing(nn.Module):
         return x_t
 
     @torch.no_grad()
-    def sample(self, x_0):
+    def sample(self, x_0, pbar=True):
         x_t = x_0
         
-        t_range = tqdm(torch.arange(0, 1, step=self.euler_dt))
+        if pbar:
+            t_range = tqdm(torch.arange(0, 1, step=self.euler_dt))
+        else:
+            t_range = torch.arange(0, 1, step=self.euler_dt)
         
         for t in t_range:
             x_t = x_t + self.vector_net(x_t, t) * self.euler_dt
