@@ -1,5 +1,6 @@
 import argparse
 from flow_mathcing import FlowMathcing
+from bridge_matching import BridgeMathcing, LinearBridgeNoiseScheduler
 from unet import UNet
 from utils import unpaint_center, save_picutes_cond_gen, gaussian_blurring, inverse_to_uint8_pic
 import torch
@@ -23,15 +24,16 @@ def train_epoch(model, opt, loader, corrupt_fn, device):
 
         opt.zero_grad()
         loss.backward()
-        clipping_value = 1 # arbitrary value of your choosing
+        clipping_value = 0.3 # arbitrary value of your choosing
         torch.nn.utils.clip_grad_norm(model.parameters(), clipping_value)
         opt.step()
         loss_storage.append(loss.item())
         pbar.set_description(f'Loss: {torch.mean(torch.tensor(loss_storage))}')
         if wandb.run:
             wandb.log({'loss': loss.item()})
-        # if itr > 1000:
-        #     break
+
+        if itr > 1000:
+            break
 
 def calculate_fid(test_loader, corrupt_fn, model, device):
     fid = FrechetInceptionDistance(feature=64).to(device)
@@ -47,7 +49,7 @@ def calculate_fid(test_loader, corrupt_fn, model, device):
         fid.update(inverse_to_uint8_pic(x_1_gt), real=True)
         fid.update(inverse_to_uint8_pic(x_1_sampled), real=False)
         
-        if itr > 1000:
+        if itr > 100:
             break
 
     ret_val = fid.compute()
@@ -66,6 +68,8 @@ if __name__ == '__main__':
     parser.add_argument('--wandb', action=argparse.BooleanOptionalAction, default=False, help='Turns on/off wandb logging')
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--fid', action=argparse.BooleanOptionalAction, default=False, help='Turns on/off FID calculation. Be aware as it takes a lot of time')
+    parser.add_argument('--model', choices=['fm', 'bm'], type=str, help='Choose model fm for Flow Matching, bm for Bridge Matching')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
 
     args = parser.parse_args()
 
@@ -73,7 +77,7 @@ if __name__ == '__main__':
         wandb.init(project='Paired Unpaired Learning', config={'task': args.task, 'dataset': args.dataset})
 
     if args.dataset == 'cifar': 
-
+        
         transform = torchvision.transforms.Compose(
             [torchvision.transforms.ToTensor(),
             torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
@@ -99,8 +103,8 @@ if __name__ == '__main__':
                 torchvision.transforms.Normalize([0.5],[0.5])
             ])
         train_dataset = torchvision.datasets.CelebA(root="data", split='train', transform=celeba_transform, download=True)
-        test_dataset = torchvision.datasets.CelebA(root="data", split='val', transform=celeba_transform, download=True)
-        unet = UNet(3, base_channels=256, channel_mults=(1, 2, 4, 8))
+        test_dataset = torchvision.datasets.CelebA(root="data", split='valid', transform=celeba_transform, download=True)
+        unet = UNet(3, base_channels=128, channel_mults=(1, 2, 4, 8))
     else:
         raise ValueError('Wrong dataset name')
     
@@ -109,9 +113,14 @@ if __name__ == '__main__':
     elif args.task == 'deblurring_gaussian':
         corrupt_fn = gaussian_blurring
 
-    fm_model = FlowMathcing(unet)
-    fm_model.to(device)
-    opt = torch.optim.Adam(fm_model.parameters(), lr=1e-4, weight_decay=0)
+    if args.model == 'fm':
+        model = FlowMathcing(unet)
+    else:
+        noise_sch = LinearBridgeNoiseScheduler(max_beta=1.5e-4)
+        model = BridgeMathcing(unet, noise_sch)
+
+    model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0)
     
     epochs = 100
     batch_size = args.batch_size
@@ -122,15 +131,17 @@ if __name__ == '__main__':
                                           shuffle=True, num_workers=0, drop_last=True)
     for epoch in range(epochs):
         print(f'Epoch {epoch} starts...')
-        train_epoch(fm_model, opt, loader, corrupt_fn, device)
+        train_epoch(model, opt, loader, corrupt_fn, device)
 
-        torch.save(fm_model.state_dict(), f'fm_model_{args.dataset}_{args.task}.pth')
         save_pic_name = f'pics/{args.dataset}_{args.task}_{epoch}.jpeg'
         x_0_sample = next(iter(loader))[0].to(device)
-        save_picutes_cond_gen(fm_model, corrupt_fn(x_0_sample), save_name=save_pic_name, gt=x_0_sample)
+        save_picutes_cond_gen(model, corrupt_fn(x_0_sample), save_name=save_pic_name, gt=x_0_sample)
+
+        if (epoch + 1) % 5 == 0:
+            torch.save(model.state_dict(), f'{args.model}_model_{args.dataset}_{args.task}_ep_{epoch}.pth')
 
         if (epoch + 1) % 25 == 0 and args.fid:
-            fid = calculate_fid(test_loader, corrupt_fn, fm_model, device)
+            fid = calculate_fid(test_loader, corrupt_fn, model, device)
             print(f'FID: {fid}')
 
         # if wandb.run:

@@ -2,11 +2,11 @@ import torch
 import matplotlib.pyplot as plt
 import torchvision
 
-def unpaint_center(images, mask_size=0.4):
+def unpaint_center(images, mask_size=0.65):
     img_size = images.shape[-1]
     mask = torch.ones_like(images)
     lower_bound, higher_bound = int(mask_size / 2 * img_size), img_size - int(mask_size / 2 * img_size)
-    mask[:, :, lower_bound:higher_bound, lower_bound:higher_bound] = torch.randn([images.shape[0], images.shape[1], higher_bound - lower_bound, higher_bound - lower_bound]) * 0.1
+    mask[:, :, lower_bound:higher_bound, lower_bound:higher_bound] = torch.randn([images.shape[0], images.shape[1], higher_bound - lower_bound, higher_bound - lower_bound]) * 1
     return torch.mul(images, mask)
 
 def save_picutes_cond_gen(model, x_0, save_name='pics.jpeg', gt=None):
@@ -31,11 +31,11 @@ def save_picutes_cond_gen(model, x_0, save_name='pics.jpeg', gt=None):
 
     out = out.cpu().numpy()
 
-    plt.rcParams["figure.figsize"] = [5, 5]
+    # plt.rcParams["figure.figsize"] = [5, 5]
     plt.imshow(out)
     plt.savefig(save_name, dpi = 1000)
 
-def gaussian_blurring(images, max_sigma=3):
+def gaussian_blurring(images, max_sigma=2):
     blurring_fn = torchvision.transforms.GaussianBlur(5, sigma=(max_sigma / 2, max_sigma))
     return blurring_fn(images) + torch.randn_like(images) * 0.001
     
