@@ -10,23 +10,28 @@ import wandb
 from PIL import Image
 from torchmetrics.image.fid import FrechetInceptionDistance
 
-def train_epoch(model, opt, loader, corrupt_fn, device):
+def train_epoch(model, opt, loader, corrupt_fn, device, grad_acc):
     model.train()
     loss_storage = []
     pbar = tqdm(enumerate(list(iter(loader))))
+    opt.zero_grad()
 
+    t_eps = 1e-3
     for itr, item in pbar:
         x_1, y = item
         x_0 = corrupt_fn(x_1)
         x_0, x_1 = x_0.to(device), x_1.to(device)
-        t = torch.rand(x_1.shape[0]).to(device)
+        t = (torch.rand(x_1.shape[0]).to(device)) * (1 - 2 * t_eps) + t_eps
         loss = model.step(x_0, x_1, t)
 
-        opt.zero_grad()
         loss.backward()
-        clipping_value = 0.3 # arbitrary value of your choosing
+        clipping_value = 0.1 # arbitrary value of your choosing
         torch.nn.utils.clip_grad_norm(model.parameters(), clipping_value)
-        opt.step()
+        if itr % grad_acc == 0:
+            opt.step()
+            opt.zero_grad()
+            # print('step')
+
         loss_storage.append(loss.item())
         pbar.set_description(f'Loss: {torch.mean(torch.tensor(loss_storage))}')
         if wandb.run:
@@ -68,8 +73,9 @@ if __name__ == '__main__':
     parser.add_argument('--wandb', action=argparse.BooleanOptionalAction, default=False, help='Turns on/off wandb logging')
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--fid', action=argparse.BooleanOptionalAction, default=False, help='Turns on/off FID calculation. Be aware as it takes a lot of time')
-    parser.add_argument('--model', choices=['fm', 'bm'], type=str, help='Choose model fm for Flow Matching, bm for Bridge Matching')
+    parser.add_argument('--model', choices=['fm', 'bm'], default=['bm'], type=str, help='Choose model fm for Flow Matching, bm for Bridge Matching')
     parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
+    parser.add_argument('--grad_acc', type=int, default=1, help='Number of gradient accumulation steps')
 
     args = parser.parse_args()
 
@@ -131,7 +137,7 @@ if __name__ == '__main__':
                                           shuffle=True, num_workers=0, drop_last=True)
     for epoch in range(epochs):
         print(f'Epoch {epoch} starts...')
-        train_epoch(model, opt, loader, corrupt_fn, device)
+        train_epoch(model, opt, loader, corrupt_fn, device, args.grad_acc)
 
         save_pic_name = f'pics/{args.dataset}_{args.task}_{epoch}.jpeg'
         x_0_sample = next(iter(loader))[0].to(device)

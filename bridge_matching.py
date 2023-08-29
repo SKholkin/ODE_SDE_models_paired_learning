@@ -66,7 +66,9 @@ class BridgeMathcing(nn.Module):
         for t in t_range:
             eps_noise = torch.randn_like(x_t)
             beta_t = self.sch.beta(t)
-            x_t = x_t + self.vector_net(x_t, t) * self.euler_dt + torch.sqrt(self.euler_dt * beta_t) * eps_noise
+
+            sigma_overlined_t = self.sch.sigma_overlined(t)
+            x_t = x_t + (beta_t  / (sigma_overlined_t ** 2)) * self.vector_net(x_t, t) * self.euler_dt + torch.sqrt(self.euler_dt * beta_t) * eps_noise
             
         return x_t
 
@@ -85,9 +87,9 @@ class BridgeMathcing(nn.Module):
         t = t.reshape([-1, 1, 1, 1])
         x_t = self.sample_x_t(x_0, x_1, t)
         x_t_hat = self.vector_net(x_t, t)
-        return self.loss(x_t_hat, x_0, x_1, t).mean()
+        return self.loss(x_t_hat, x_1, x_t, t).mean()
     
     def loss(self, x_t_hat, x_1, x_t, t):
         beta_t = self.sch.beta(t)
         sigma_overlined_t = self.sch.sigma_overlined(t)
-        return torch.norm((x_t_hat - beta_t * (x_1 - x_t) / (sigma_overlined_t ** 2)).reshape([x_1.shape[0], -1]), dim=-1)
+        return torch.norm((x_t_hat - (x_1 - x_t)).reshape([x_1.shape[0], -1]), dim=-1)
